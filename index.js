@@ -13,8 +13,8 @@ const fs = require("fs");
 // CONFIG
 // ==============================
 
-const TOKEN = "YOUR_BOT_TOKEN";
-const CLIENT_ID = "YOUR_CLIENT_ID";
+const TOKEN = "MTU1NjIwNjI3NDE0NzAwMDQwMg.Gq0ctD.PsYVWMlgwvUOmGDwqb47vjEozqOtCJNCzbf5Tk";
+const CLIENT_ID = "1556206274147000402";
 
 // Soft Pink
 const PINK = 0xF7A8C4;
