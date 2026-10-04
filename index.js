@@ -2,9 +2,7 @@ const {
     Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField, 
     REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle 
 } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const express = require('express');
-const play = require('play-dl');
 
 // 🌐 Express Dashboard (Keep Alive for Render)
 const app = express();
@@ -28,7 +26,8 @@ const client = new Client({
 const db = {
     settings: {}, // guildId -> config
     economy: {},  // guildId -> userId -> data
-    store: {},    // guildId -> items
+    warnings: {}, // guildId -> userId -> array of warnings
+    store: {},    
     customReplies: {},
     autoResponders: {}
 };
@@ -67,32 +66,16 @@ function getUser(guildId, userId) {
         db.economy[guildId][userId] = {
             wallet: s.start_balance,
             bank: 0,
-            last_work: 0,
-            last_crime: 0,
-            last_slut: 0
+            last_work: 0
         };
     }
     return db.economy[guildId][userId];
 }
 
-// Custom Time Parser: 1m=min, 1h=hour, 1d=day, 1w=week, 1m=month (30d)
-function parseDuration(str) {
-    if (!str) return 0;
-    const match = str.match(/^(\d+)([a-z]+)$/i);
-    if (!match) return 0;
-    const num = parseInt(match[1]);
-    const unit = match[2].toLowerCase();
-
-    switch (unit) {
-        case 's': return num * 1000;
-        case 'm': return num * 60 * 1000;
-        case 'h': return num * 3600 * 1000;
-        case 'd': return num * 86400 * 1000;
-        case 'w': return num * 7 * 86400 * 1000;
-        case 'month':
-        case 'mo': return num * 30 * 86400 * 1000;
-        default: return 0;
-    }
+function getWarnings(guildId, userId) {
+    if (!db.warnings[guildId]) db.warnings[guildId] = {};
+    if (!db.warnings[guildId][userId]) db.warnings[guildId][userId] = [];
+    return db.warnings[guildId][userId];
 }
 
 /* ==================== SLASH COMMANDS ==================== */
@@ -103,6 +86,8 @@ const slashCommands = [
     new SlashCommandBuilder().setName('work').setDescription('Earn quick cash'),
     new SlashCommandBuilder().setName('dep').setDescription('Deposit money to bank').addStringOption(o => o.setName('amount').setDescription('Amount or all').setRequired(true)),
     new SlashCommandBuilder().setName('with').setDescription('Withdraw money from bank').addStringOption(o => o.setName('amount').setDescription('Amount or all').setRequired(true)),
+    new SlashCommandBuilder().setName('warn').setDescription('Warn a user').addUserOption(o => o.setName('user').setDescription('Member to warn').setRequired(true)).addStringOption(o => o.setName('reason').setDescription('Reason for warn')),
+    new SlashCommandBuilder().setName('warnings').setDescription('Check user warnings').addUserOption(o => o.setName('user').setDescription('Target member').setRequired(true)),
     new SlashCommandBuilder().setName('hug').setDescription('Hug someone with an anime reaction').addUserOption(o => o.setName('user').setDescription('Member to hug').setRequired(true))
 ];
 
@@ -154,6 +139,10 @@ client.on('messageCreate', async message => {
                 value: '`!add-modrole @role` - Assign moderation role\n`!set-currency <symbol>` - Set server cash emoji\n`!set-start-balance <amount>` - Default starting bank\n`!add-money @user <amt>` - Add cash to user\n`!remove-money @user <amt>` - Remove cash\n`!reset-economy` - Reset all server balances'
             },
             {
+                name: '🛡 Moderation & Warning System',
+                value: '`!warn @user [reason]` - Issue a warning to a member\n`!warnings @user` - View member warning history\n`!clearwarns @user` - Clear all warnings of a user\n`!ban @user` - Ban a member\n`!kick @user` - Kick a member\n`!timeout @user <time>` - Mute member (e.g. 1h, 1d)\n`!temp-role @user @role <time>` - Give temporary role'
+            },
+            {
                 name: '💰 Economy & Cash',
                 value: '`!bal` / `!balance` - View Wallet and Bank cash\n`!dep <amt>` / `!with <amt>` - Bank deposit or withdraw\n`!work` / `!slut` / `!crime` - Earn cash\n`!rob @user` - Attempt to steal money\n`!give-money @user <amt>` - Transfer cash'
             },
@@ -162,24 +151,52 @@ client.on('messageCreate', async message => {
                 value: '`!blackjack` (`!bj`) - Play Blackjack card game\n`!higher-lower` (`!hl`) - Guess higher or lower\n`!roulette` - Bet on red or black\n`!russian-roulette` - High risk cash game\n`!slot-machine` (`!slots`) - Spin the slot machine'
             },
             {
-                name: '🛒 Store & Inventory',
-                value: '`!store` - View store items\n`!buy-item <id>` - Buy item\n`!sell-item <id>` - Sell item from inventory\n`!create-item` / `!delete-item` - Manage shop'
-            },
-            {
                 name: '🌸 Anime Reactions (OwO/Mimu)',
                 value: '`!hug @user` - Send an anime hug GIF\n`!kiss @user` - Send a kiss reaction\n`!pat @user` - Headpat a member\n`!slap @user` - Slap someone gently'
-            },
-            {
-                name: '🛡 Moderation & Logs',
-                value: '`!ban @user` - Ban a member\n`!kick @user` - Kick a member\n`!timeout @user <time>` - Mute member (e.g. 1h, 1d)\n`!temp-role @user @role <time>` - Give temporary role\n`!set-member-log` - Configure member join/leave logs'
-            },
-            {
-                name: '🎶 Music Player',
-                value: '`!play <query>` - Play song from YT/Spotify\n`!skip` - Skip current track\n`!volume <1-100>` - Change audio volume\n`!leave` - Disconnect from voice'
             }
         ];
 
         return sendEmbed(message.channel, '🌸 ✨ Aesthetic Bot Command List ✨ 🌸', 'Supported Prefixes: `!`, `c!`, `C!`, `&!`, `c&!`, `C&!` and `/` Slash Commands', fields);
+    }
+
+    /* ================= 🛡 MODERATION & WARN SYSTEM ================= */
+
+    if (command === 'warn') {
+        if (!hasModRole) return sendEmbed(message.channel, '❌ Permission Denied', 'You need Moderator permissions to use this command.');
+        const target = message.mentions.members.first();
+        if (!target) return sendEmbed(message.channel, '❌ Error', 'Please mention a member to warn.');
+        
+        const reason = args.slice(1).join(' ') || 'No reason provided';
+        const userWarns = getWarnings(guildId, target.id);
+        
+        userWarns.push({
+            reason: reason,
+            moderator: message.author.tag,
+            date: new Date().toLocaleDateString()
+        });
+
+        return sendEmbed(message.channel, '⚠️ Member Warned', `**Member:** ${target.user.tag}\n**Reason:** ${reason}\n**Total Warnings:** ${userWarns.length}`);
+    }
+
+    if (command === 'warnings' || command === 'warns') {
+        const target = message.mentions.members.first() || message.member;
+        const userWarns = getWarnings(guildId, target.id);
+
+        if (userWarns.length === 0) {
+            return sendEmbed(message.channel, '🌸 Warning History', `**${target.user.tag}** has no warnings! ✨`);
+        }
+
+        const warningList = userWarns.map((w, index) => `**#${index + 1}** | **Reason:** ${w.reason} *(By: ${w.moderator} on ${w.date})*`).join('\n');
+        return sendEmbed(message.channel, `⚠️ Warnings for ${target.user.tag}`, warningList);
+    }
+
+    if (command === 'clearwarns' || command === 'clearwarnings') {
+        if (!hasModRole) return sendEmbed(message.channel, '❌ Permission Denied', 'You need Moderator permissions to clear warnings.');
+        const target = message.mentions.members.first();
+        if (!target) return sendEmbed(message.channel, '❌ Error', 'Please mention a member to clear warnings.');
+
+        db.warnings[guildId][target.id] = [];
+        return sendEmbed(message.channel, '✅ Warnings Cleared', `Successfully cleared all warnings for **${target.user.tag}**.`);
     }
 
     /* ================= 👑 ADMIN COMMANDS ================= */
@@ -189,13 +206,6 @@ client.on('messageCreate', async message => {
         if (!role) return sendEmbed(message.channel, '❌ Error', 'Please mention a valid role.');
         s.mod_role = role.id;
         return sendEmbed(message.channel, '✅ Mod Role Set', `Moderator commands can now be used by **${role.name}**.`);
-    }
-
-    if (command === 'set-currency' && isOwnerOrAdmin) {
-        const sym = args[0];
-        if (!sym) return sendEmbed(message.channel, '❌ Error', 'Please provide an emoji or symbol.');
-        s.currency = sym;
-        return sendEmbed(message.channel, '✅ Currency Updated', `Server currency symbol set to: **${sym}**`);
     }
 
     /* ================= 💰 ECONOMY COMMANDS ================= */
@@ -246,33 +256,6 @@ client.on('messageCreate', async message => {
             .setColor(SOFT_PINK);
 
         return message.channel.send({ embeds: [embed] });
-    }
-
-    /* ================= 🛡 LOG CONFIRMATION BUTTONS ================= */
-
-    if (['set-member-log', 'set-joinleave-log', 'log-message', 'log-voice', 'log-moderation', 'log-server'].includes(command) && isOwnerOrAdmin) {
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('confirm_log_yes').setLabel('Yes').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId('confirm_log_no').setLabel('No').setStyle(ButtonStyle.Danger)
-        );
-
-        const embed = new EmbedBuilder()
-            .setTitle('⚙️ Log Channel Setup')
-            .setDescription(`Would you like to set <#${message.channel.id}> as the official **${command}** channel?`)
-            .setColor(SOFT_PINK);
-
-        return message.channel.send({ embeds: [embed], components: [row] });
-    }
-});
-
-/* ==================== BUTTON INTERACTION ==================== */
-
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton()) return;
-    if (interaction.customId === 'confirm_log_yes') {
-        return interaction.update({ content: '✅ Log channel successfully set!', embeds: [], components: [] });
-    } else if (interaction.customId === 'confirm_log_no') {
-        return interaction.update({ content: '❌ Action cancelled.', embeds: [], components: [] });
     }
 });
 
