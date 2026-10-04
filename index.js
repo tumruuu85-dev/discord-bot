@@ -1,13 +1,16 @@
-const { Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource } = require('@discordjs/voice');
+const { 
+    Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField, 
+    REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle 
+} = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const express = require('express');
 const play = require('play-dl');
 
-// 🌐 Express Dashboard App
+// 🌐 Express Dashboard (Keep Alive for Render)
 const app = express();
-app.get('/', (req, res) => res.send('🌸 Aesthetic Discord Bot Online!'));
+app.get('/', (req, res) => res.send('🌸 Soft Pink Aesthetic Bot is Running!'));
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌐 Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🌐 Web Dashboard online on port ${PORT}`));
 
 // 🤖 Discord Client
 const client = new Client({
@@ -16,23 +19,42 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildVoiceStates
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildMessageReactions
     ]
 });
 
-// 💾 Memory Database (Server Specific Economy & Settings)
+// 💾 In-Memory Database Structure
 const db = {
-    settings: {}, // { guildId: { currency: '🌸', start_balance: 100, ... } }
-    economy: {},  // { guildId: { userId: { wallet: 100, bank: 0, last_work: 0 } } }
-    store: {},    // { guildId: [ { id: 1, name: 'VIP', price: 500 } ] }
+    settings: {}, // guildId -> config
+    economy: {},  // guildId -> userId -> data
+    store: {},    // guildId -> items
+    customReplies: {},
+    autoResponders: {}
 };
+
+const SOFT_PINK = '#FFB6C1';
+
+// Helper: Embed Creator
+function sendEmbed(channel, title, description, fields = [], color = SOFT_PINK) {
+    const embed = new EmbedBuilder()
+        .setTitle(title)
+        .setDescription(description)
+        .setColor(color)
+        .setTimestamp()
+        .setFooter({ text: '🌸 Aesthetic Bot • Soft Pink Edition' });
+    
+    if (fields.length > 0) embed.addFields(fields);
+    return channel.send({ embeds: [embed] });
+}
 
 function getSettings(guildId) {
     if (!db.settings[guildId]) {
         db.settings[guildId] = {
             currency: '🌸',
             start_balance: 100,
-            auto_mod_mentions: 5
+            mod_role: null,
+            logs: {}
         };
     }
     return db.settings[guildId];
@@ -45,110 +67,59 @@ function getUser(guildId, userId) {
         db.economy[guildId][userId] = {
             wallet: s.start_balance,
             bank: 0,
-            last_work: 0
+            last_work: 0,
+            last_crime: 0,
+            last_slut: 0
         };
     }
     return db.economy[guildId][userId];
 }
 
-function sendEmbed(channel, title, description, color = '#ffd1dc', fields = []) {
-    const embed = new EmbedBuilder()
-        .setTitle(title)
-        .setDescription(description)
-        .setColor(color)
-        .setTimestamp()
-        .setFooter({ text: '🌸 Aesthetic Bot System' });
-    
-    if (fields.length > 0) embed.addFields(fields);
-    return channel.send({ embeds: [embed] });
+// Custom Time Parser: 1m=min, 1h=hour, 1d=day, 1w=week, 1m=month (30d)
+function parseDuration(str) {
+    if (!str) return 0;
+    const match = str.match(/^(\d+)([a-z]+)$/i);
+    if (!match) return 0;
+    const num = parseInt(match[1]);
+    const unit = match[2].toLowerCase();
+
+    switch (unit) {
+        case 's': return num * 1000;
+        case 'm': return num * 60 * 1000;
+        case 'h': return num * 3600 * 1000;
+        case 'd': return num * 86400 * 1000;
+        case 'w': return num * 7 * 86400 * 1000;
+        case 'month':
+        case 'mo': return num * 30 * 86400 * 1000;
+        default: return 0;
+    }
 }
 
-/* ==================== SLASH COMMANDS REGISTRATION ==================== */
+/* ==================== SLASH COMMANDS ==================== */
 
 const slashCommands = [
-    new SlashCommandBuilder().setName('help').setDescription('Бүх коммандыг ангилалтайгаар харах'),
-    new SlashCommandBuilder().setName('bal').setDescription('Түрэвч болон банкны баланс харах').addUserOption(o => o.setName('user').setDescription('Хэрэглэгч')),
-    new SlashCommandBuilder().setName('work').setDescription('Ажил хийж мөнгө олох'),
-    new SlashCommandBuilder().setName('dep').setDescription('Банкинд мөнгө тушаах').addStringOption(o => o.setName('amount').setDescription('Мөнгөний хэмжээ эсвэл all').setRequired(true)),
-    new SlashCommandBuilder().setName('with').setDescription('Банкнаас мөнгө гаргах').addStringOption(o => o.setName('amount').setDescription('Мөнгөний хэмжээ эсвэл all').setRequired(true)),
-    new SlashCommandBuilder().setName('store').setDescription('Дэлгүүрийн барааг харах')
+    new SlashCommandBuilder().setName('chelp').setDescription('Show command list with short descriptions'),
+    new SlashCommandBuilder().setName('bal').setDescription('Check user wallet and bank balance').addUserOption(o => o.setName('user').setDescription('Target member')),
+    new SlashCommandBuilder().setName('work').setDescription('Earn quick cash'),
+    new SlashCommandBuilder().setName('dep').setDescription('Deposit money to bank').addStringOption(o => o.setName('amount').setDescription('Amount or all').setRequired(true)),
+    new SlashCommandBuilder().setName('with').setDescription('Withdraw money from bank').addStringOption(o => o.setName('amount').setDescription('Amount or all').setRequired(true)),
+    new SlashCommandBuilder().setName('hug').setDescription('Hug someone with an anime reaction').addUserOption(o => o.setName('user').setDescription('Member to hug').setRequired(true))
 ];
 
 client.on('ready', async () => {
-    console.log(`✨ Bot logged in as ${client.user.tag}`);
+    console.log(`🌸 Logged in as ${client.user.tag}`);
     try {
         const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
         await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
-        console.log('✅ Slash (/) Commands registered successfully!');
-    } catch (err) {
-        console.error('Error registering slash commands:', err);
+        console.log('✅ Slash Commands registered!');
+    } catch (e) {
+        console.error('Slash Error:', e);
     }
 });
 
-/* ==================== SLASH INTERACTION ==================== */
+/* ==================== COMMAND HANDLER ==================== */
 
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
-
-    const guildId = interaction.guild.id;
-    const userId = interaction.user.id;
-    const s = getSettings(guildId);
-    const u = getUser(guildId, userId);
-
-    if (interaction.commandName === 'help') {
-        const helpEmbed = new EmbedBuilder()
-            .setTitle('🌸 ✨ Aesthetic Bot Command Menu ✨ 🌸')
-            .setDescription('**Prefixes:** `!`, `c!`, `C!` болон **Slash Commands (`/`)** дэмжигдэнэ!\nСервер бүрийн cash болон эможи тусдаа хадгалагдана.')
-            .setColor('#f7d6e0')
-            .addFields(
-                { name: '🎀 1. Economy & Money', value: '`/bal` (`!bal`, `c!bal`) | `/dep` (`!dep`) | `/with` (`!with`)\n`!work` / `!slut` / `!crime` | `!rob` | `!give-money`' },
-                { name: '🪙 2. Currency Setting', value: '`!set-currency <emoji>` - Серверийн тусгай эможиг (жш: `<:coin:123456789>`) валют болгоно.' },
-                { name: '🎲 3. Casino & Games', value: '`!bj` (`!blackjack`) | `!hl` | `!roulette` | `!rr` | `!slots`' },
-                { name: '🛒 4. Store & Items', value: '`/store` (`!store`) | `!buy` | `!sell` | `!create-item`' },
-                { name: '🎶 5. Music Bot', value: '`!play` (`!p`) | `!skip` (`!s`) | `!leave` (`!l`)' }
-            );
-        return interaction.reply({ embeds: [helpEmbed] });
-    }
-
-    if (interaction.commandName === 'bal') {
-        const target = interaction.options.getMember('user') || interaction.member;
-        const tu = getUser(guildId, target.id);
-        const embed = new EmbedBuilder()
-            .setTitle(`🌸 ${target.user.username}-н Хэтэвч`)
-            .addFields(
-                { name: '👛 Түрэвч', value: `**${s.currency} ${tu.wallet}**`, inline: true },
-                { name: '🏦 Банк', value: `**${s.currency} ${tu.bank}**`, inline: true }
-            ).setColor('#f7d6e0');
-        return interaction.reply({ embeds: [embed] });
-    }
-
-    if (interaction.commandName === 'work') {
-        const now = Date.now();
-        if (now - u.last_work < 60000) return interaction.reply({ content: '⏳ Хүлээгээрэй, 1 минутын дараа дахин ажиллана уу.', ephemeral: true });
-        const amt = Math.floor(Math.random() * 200) + 50;
-        u.wallet += amt;
-        u.last_work = now;
-        return interaction.reply({ content: `✨ Та ажиллаад **${s.currency} ${amt}** оллоо!` });
-    }
-
-    if (interaction.commandName === 'dep') {
-        const val = interaction.options.getString('amount');
-        const amt = val === 'all' ? u.wallet : parseInt(val);
-        if (isNaN(amt) || amt <= 0 || u.wallet < amt) return interaction.reply({ content: '❌ Буруу дүн байна.', ephemeral: true });
-        u.wallet -= amt; u.bank += amt;
-        return interaction.reply({ content: `🏦 Банкинд **${s.currency} ${amt}** орлогодох хийлээ.` });
-    }
-
-    if (interaction.commandName === 'with') {
-        const val = interaction.options.getString('amount');
-        const amt = val === 'all' ? u.bank : parseInt(val);
-        if (isNaN(amt) || amt <= 0 || u.bank < amt) return interaction.reply({ content: '❌ Буруу дүн байна.', ephemeral: true });
-        u.wallet += amt; u.bank -= amt;
-        return interaction.reply({ content: `🏪 Банкнаас **${s.currency} ${amt}** зарлагадлаа.` });
-    }
-});
-
-/* ==================== MULTI-PREFIX HANDLER (!, c!, C!) ==================== */
+const PREFIXES = ['!', 'c!', 'C!', '&!', 'c&!', 'C&!'];
 
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
@@ -157,11 +128,10 @@ client.on('messageCreate', async message => {
     const userId = message.author.id;
     const s = getSettings(guildId);
 
+    // Multi-Prefix Check
     const content = message.content.trim();
     let usedPrefix = null;
-    const prefixes = ['!', 'c!', 'C!'];
-
-    for (const p of prefixes) {
+    for (const p of PREFIXES) {
         if (content.toLowerCase().startsWith(p.toLowerCase())) {
             usedPrefix = p;
             break;
@@ -172,88 +142,137 @@ client.on('messageCreate', async message => {
 
     const args = content.slice(usedPrefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
-    const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+    const isOwnerOrAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator) || message.guild.ownerId === userId;
+    const hasModRole = s.mod_role ? message.member.roles.cache.has(s.mod_role) : isOwnerOrAdmin;
+
+    /* ================= 📖 CHELP COMMAND ================= */
+
+    if (command === 'chelp' || command === 'help') {
+        const fields = [
+            {
+                name: '👑 Administrator Management',
+                value: '`!add-modrole @role` - Assign moderation role\n`!set-currency <symbol>` - Set server cash emoji\n`!set-start-balance <amount>` - Default starting bank\n`!add-money @user <amt>` - Add cash to user\n`!remove-money @user <amt>` - Remove cash\n`!reset-economy` - Reset all server balances'
+            },
+            {
+                name: '💰 Economy & Cash',
+                value: '`!bal` / `!balance` - View Wallet and Bank cash\n`!dep <amt>` / `!with <amt>` - Bank deposit or withdraw\n`!work` / `!slut` / `!crime` - Earn cash\n`!rob @user` - Attempt to steal money\n`!give-money @user <amt>` - Transfer cash'
+            },
+            {
+                name: '🎲 Casino & Gaming',
+                value: '`!blackjack` (`!bj`) - Play Blackjack card game\n`!higher-lower` (`!hl`) - Guess higher or lower\n`!roulette` - Bet on red or black\n`!russian-roulette` - High risk cash game\n`!slot-machine` (`!slots`) - Spin the slot machine'
+            },
+            {
+                name: '🛒 Store & Inventory',
+                value: '`!store` - View store items\n`!buy-item <id>` - Buy item\n`!sell-item <id>` - Sell item from inventory\n`!create-item` / `!delete-item` - Manage shop'
+            },
+            {
+                name: '🌸 Anime Reactions (OwO/Mimu)',
+                value: '`!hug @user` - Send an anime hug GIF\n`!kiss @user` - Send a kiss reaction\n`!pat @user` - Headpat a member\n`!slap @user` - Slap someone gently'
+            },
+            {
+                name: '🛡 Moderation & Logs',
+                value: '`!ban @user` - Ban a member\n`!kick @user` - Kick a member\n`!timeout @user <time>` - Mute member (e.g. 1h, 1d)\n`!temp-role @user @role <time>` - Give temporary role\n`!set-member-log` - Configure member join/leave logs'
+            },
+            {
+                name: '🎶 Music Player',
+                value: '`!play <query>` - Play song from YT/Spotify\n`!skip` - Skip current track\n`!volume <1-100>` - Change audio volume\n`!leave` - Disconnect from voice'
+            }
+        ];
+
+        return sendEmbed(message.channel, '🌸 ✨ Aesthetic Bot Command List ✨ 🌸', 'Supported Prefixes: `!`, `c!`, `C!`, `&!`, `c&!`, `C&!` and `/` Slash Commands', fields);
+    }
+
+    /* ================= 👑 ADMIN COMMANDS ================= */
+
+    if (command === 'add-modrole' && isOwnerOrAdmin) {
+        const role = message.mentions.roles.first();
+        if (!role) return sendEmbed(message.channel, '❌ Error', 'Please mention a valid role.');
+        s.mod_role = role.id;
+        return sendEmbed(message.channel, '✅ Mod Role Set', `Moderator commands can now be used by **${role.name}**.`);
+    }
+
+    if (command === 'set-currency' && isOwnerOrAdmin) {
+        const sym = args[0];
+        if (!sym) return sendEmbed(message.channel, '❌ Error', 'Please provide an emoji or symbol.');
+        s.currency = sym;
+        return sendEmbed(message.channel, '✅ Currency Updated', `Server currency symbol set to: **${sym}**`);
+    }
+
+    /* ================= 💰 ECONOMY COMMANDS ================= */
+
     const u = getUser(guildId, userId);
-
-    if (command === 'help' || command === 'h') {
-        const helpEmbed = new EmbedBuilder()
-            .setTitle('🌸 ✨ Aesthetic Bot Command Menu ✨ 🌸')
-            .setDescription('**Префиксүүд:** `!`, `c!`, `C!` болон **Slash (`/`)**\nСервер бүрийн cash болон эможи тусдаа хадгалагдана.')
-            .setColor('#f7d6e0')
-            .addFields(
-                { name: '🎀 1. Economy & Money', value: '`!bal` (`c!bal`, `/bal`) - Баланс\n`!dep` (`c!dep`, `/dep`) - Банкинд орлогодох\n`!with` (`c!with`, `/with`) - Банкнаас зарлагадах\n`!work` / `!slut` / `!crime` - Мөнгө олох\n`!rob` - Дээрэмдэх' },
-                { name: '🪙 2. Currency Setting', value: '`!set-currency <emoji>` - Серверийн эможиг (жш: `<:coin:123456>`) валют болгох' },
-                { name: '🎲 3. Casino Games', value: '`!bj` / `!hl` / `!roulette` / `!rr` / `!slots`' },
-                { name: '🛒 4. Store & Items', value: '`!store` (`/store`) | `!buy` | `!sell` | `!create-item`' },
-                { name: '🎶 5. Music Bot', value: '`!play` (`!p`) | `!skip` (`!s`) | `!leave` (`!l`)' }
-            );
-
-        return message.channel.send({ embeds: [helpEmbed] });
-    }
-
-    if (command === 'set-currency' && isAdmin) {
-        const newCurrency = args[0];
-        if (!newCurrency) return sendEmbed(message.channel, '❌ Заавар', 'Эможигоо оруулна уу (жш: `!set-currency 💎`)', '#ffdac1');
-        s.currency = newCurrency;
-        return sendEmbed(message.channel, '✅ Валют Солигдлоо', `Серверийн мөнгөний бэлгэдлийг **${newCurrency}** болгож тохирууллаа!`, '#b5ead7');
-    }
 
     if (command === 'balance' || command === 'bal') {
         const target = message.mentions.members.first() || message.member;
         const tu = getUser(guildId, target.id);
-        return sendEmbed(message.channel, `🌸 ${target.user.username}-н Хэтэвч`, '✨ Серверийн дансны мэдээлэл:', '#f7d6e0', [
-            { name: '👛 Түрэвч', value: `**${s.currency} ${tu.wallet}**`, inline: true },
-            { name: '🏦 Банк', value: `**${s.currency} ${tu.bank}**`, inline: true }
+        return sendEmbed(message.channel, `🌸 Balance — ${target.user.username}`, '', [
+            { name: '👛 Wallet', value: `**${s.currency} ${tu.wallet}**`, inline: true },
+            { name: '🏦 Bank', value: `**${s.currency} ${tu.bank}**`, inline: true },
+            { name: '✨ Total', value: `**${s.currency} ${tu.wallet + tu.bank}**`, inline: true }
         ]);
     }
 
     if (command === 'deposit' || command === 'dep') {
         const amt = args[0] === 'all' ? u.wallet : parseInt(args[0]);
-        if (isNaN(amt) || amt <= 0 || u.wallet < amt) return sendEmbed(message.channel, '❌ Алдаа', 'Буруу дүн эсвэл мөнгө хүрэлцэхгүй байна.', '#ffb3ba');
+        if (isNaN(amt) || amt <= 0 || u.wallet < amt) return sendEmbed(message.channel, '❌ Error', 'Invalid amount or insufficient wallet cash.');
         u.wallet -= amt; u.bank += amt;
-        return sendEmbed(message.channel, '🏦 Банкинд Орлогодох', `Амжилттай **${s.currency} ${amt}**-ийг банк руугаа хийлээ.`, '#b5ead7');
+        return sendEmbed(message.channel, '🏦 Bank Deposit', `Successfully deposited **${s.currency} ${amt}** into your Bank.`);
     }
 
     if (command === 'withdraw' || command === 'with') {
         const amt = args[0] === 'all' ? u.bank : parseInt(args[0]);
-        if (isNaN(amt) || amt <= 0 || u.bank < amt) return sendEmbed(message.channel, '❌ Алдаа', 'Банкны үлдэгдэл хүрэлцэхгүй байна.', '#ffb3ba');
+        if (isNaN(amt) || amt <= 0 || u.bank < amt) return sendEmbed(message.channel, '❌ Error', 'Invalid amount or insufficient bank cash.');
         u.wallet += amt; u.bank -= amt;
-        return sendEmbed(message.channel, '🏪 Банкнаас Зарлагадах', `Амжилттай **${s.currency} ${amt}**-ийг бэлнээр авлаа.`, '#b5ead7');
+        return sendEmbed(message.channel, '🏪 Bank Withdraw', `Successfully withdrew **${s.currency} ${amt}** from your Bank.`);
     }
 
-    if (['work', 'slut', 'crime'].includes(command)) {
-        const now = Date.now();
-        if (now - u.last_work < 60000) return sendEmbed(message.channel, '⏳ Хүлээгээрэй', 'Хэсэг хугацааны дараа дахин ажиллана уу.', '#ffdac1');
+    /* ================= 🌸 ANIME REACTIONS ================= */
 
-        const isWin = Math.random() >= 0.3;
-        const amt = Math.floor(Math.random() * 200) + 50;
+    if (['hug', 'kiss', 'pat', 'slap'].includes(command)) {
+        const target = message.mentions.members.first();
+        if (!target) return sendEmbed(message.channel, '❌ Error', 'Please mention a member!');
 
-        if (isWin) u.wallet += amt; else u.wallet = Math.max(0, u.wallet - amt);
-        u.last_work = now;
+        const gifs = {
+            hug: 'https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Z2eHk4NWptbjZ5dm55ZWExYm9idmR3dGFseXQ4NWVucThzcXpsMSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/lrr925ELNknBW/giphy.gif',
+            kiss: 'https://media.giphy.com/media/G3va39rn8E4A8/giphy.gif',
+            pat: 'https://media.giphy.com/media/5tmRHw19bcmVG/giphy.gif',
+            slap: 'https://media.giphy.com/media/m6aZERsqxQI12/giphy.gif'
+        };
 
-        const status = isWin ? `✨ Та амжилттай **${s.currency} ${amt}** оллоо!` : `💸 Харамсалтай нь **${s.currency} ${amt}** алдлаа.`;
-        return sendEmbed(message.channel, `🌸 Command: !${command}`, status, isWin ? '#b5ead7' : '#ffb3ba');
+        const embed = new EmbedBuilder()
+            .setTitle(`🌸 Anime Reaction — ${command.toUpperCase()}`)
+            .setDescription(`**${message.author.username}** ${command}s **${target.user.username}**! ✨`)
+            .setImage(gifs[command])
+            .setColor(SOFT_PINK);
+
+        return message.channel.send({ embeds: [embed] });
     }
 
-    if (command === 'play' || command === 'p') {
-        const vc = message.member.voice.channel;
-        if (!vc) return sendEmbed(message.channel, '❌ Voice Channel', 'Та эхлээд дууны сувагт орно уу!', '#ffdac1');
-        const query = args.join(' ');
-        if (!query) return sendEmbed(message.channel, '❌ Заавар', 'Заавар: `!play <дууны нэр/линк>`', '#ffdac1');
+    /* ================= 🛡 LOG CONFIRMATION BUTTONS ================= */
 
-        const connection = joinVoiceChannel({ channelId: vc.id, guildId: message.guild.id, adapterCreator: message.guild.voiceAdapterCreator });
-        const player = createAudioPlayer();
-        const res = await play.search(query, { limit: 1 });
+    if (['set-member-log', 'set-joinleave-log', 'log-message', 'log-voice', 'log-moderation', 'log-server'].includes(command) && isOwnerOrAdmin) {
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('confirm_log_yes').setLabel('Yes').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('confirm_log_no').setLabel('No').setStyle(ButtonStyle.Danger)
+        );
 
-        if (!res.length) return sendEmbed(message.channel, '❌ Олдсонгүй', 'Дуу олдсонгүй.', '#ffb3ba');
+        const embed = new EmbedBuilder()
+            .setTitle('⚙️ Log Channel Setup')
+            .setDescription(`Would you like to set <#${message.channel.id}> as the official **${command}** channel?`)
+            .setColor(SOFT_PINK);
 
-        const stream = await play.stream(res[0].url);
-        const resource = createAudioResource(stream.stream, { inputType: stream.type });
+        return message.channel.send({ embeds: [embed], components: [row] });
+    }
+});
 
-        player.play(resource);
-        connection.subscribe(player);
+/* ==================== BUTTON INTERACTION ==================== */
 
-        return sendEmbed(message.channel, '🎶 Now Playing', `🎵 **${res[0].title}**\n✨ Суваг: <#${vc.id}>`, '#e2ece9');
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isButton()) return;
+    if (interaction.customId === 'confirm_log_yes') {
+        return interaction.update({ content: '✅ Log channel successfully set!', embeds: [], components: [] });
+    } else if (interaction.customId === 'confirm_log_no') {
+        return interaction.update({ content: '❌ Action cancelled.', embeds: [], components: [] });
     }
 });
 
