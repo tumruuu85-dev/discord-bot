@@ -1,6 +1,7 @@
 {
-  "name": "aesthetic-discord-bot",
-  "version": "1.0.0",
+  "name": "aesthetic-ultimate-bot",
+  "version": "5.0.0",
+  "description": "Aesthetic Discord Bot - Multi Prefix & Soft Pink Theme",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
