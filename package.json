@@ -1,15 +1,29 @@
-{
-  "name": "aesthetic-ultimate-bot",
-  "version": "5.0.0",
-  "description": "Aesthetic Discord Bot - Multi Prefix & Soft Pink Theme",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.14.1",
-    "@discordjs/voice": "^0.16.1",
-    "express": "^4.18.2",
-    "play-dl": "^1.9.7"
-  }
-}
+aesthetic-ultimate-bot/
+│
+├── index.js
+├── package.json
+├── .env
+│
+├── commands/
+│   ├── economy/
+│   ├── games/
+│   ├── moderation/
+│   ├── logs/
+│   ├── welcome/
+│   ├── reactions/
+│   └── music/
+│
+├── events/
+│   ├── ready.js
+│   ├── interactionCreate.js
+│   ├── guildMemberAdd.js
+│   └── guildMemberRemove.js
+│
+├── database/
+│   └── database.js
+│
+└── utils/
+    ├── embed.js
+    ├── permissions.js
+    ├── duration.js
+    └── gifs.js
