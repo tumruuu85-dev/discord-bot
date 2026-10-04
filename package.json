@@ -1,7 +1,6 @@
 {
-  "name": "aesthetic-ultimate-bot",
-  "version": "4.0.0",
-  "description": "Aesthetic Economy, Casino, Music, Moderation & Mimu Bot",
+  "name": "aesthetic-discord-bot",
+  "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,7 +8,6 @@
   "dependencies": {
     "discord.js": "^14.14.1",
     "@discordjs/voice": "^0.16.1",
-    "better-sqlite3": "^9.4.3",
     "express": "^4.18.2",
     "play-dl": "^1.9.7"
   }
