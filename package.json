@@ -1,15 +1,16 @@
 {
-  "name": "aesthetic-ultimate-bot",
+  "name": "discord-economy-bot",
   "version": "1.0.0",
-  "description": "Aesthetic Discord Bot",
+  "description": "Discord Economy & Management Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
-    "@discordjs/voice": "^0.16.1",
-    "express": "^4.18.2",
-    "play-dl": "^1.9.7"
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
